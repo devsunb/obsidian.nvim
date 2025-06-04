@@ -249,6 +249,49 @@ M.insert_text = function(text)
   end
 end
 
+---@param s string
+---@param index integer
+---@return integer[]
+M.str_widthindex = function(s, index)
+  if index < 1 or #s < index then
+    -- return full range if index is out of range
+    return { 1, vim.api.nvim_strwidth(s) }
+  end
+
+  local ws, we, b = 0, 0, 1
+  while b <= #s and b <= index do
+    local ch = s:sub(b, b + vim.str_utf_end(s, b))
+    local wch = vim.api.nvim_strwidth(ch)
+    ws = we + 1
+    we = ws + wch - 1
+    b = b + vim.str_utf_end(s, b) + 1
+  end
+
+  return { ws, we }
+end
+
+---@param s string
+---@param index integer
+---@return integer[]
+M.str_wbyteindex = function(s, index)
+  if index < 1 or vim.api.nvim_strwidth(s) < index then
+    -- return full range if index is out of range
+    return { 1, #s }
+  end
+
+  local b, bs, be, w = 1, 0, 0, 0
+  while b <= #s and w < index do
+    bs = b
+    be = bs + vim.str_utf_end(s, bs)
+    local ch = s:sub(bs, be)
+    local wch = vim.api.nvim_strwidth(ch)
+    w = w + wch
+    b = be + 1
+  end
+
+  return { bs, be }
+end
+
 --- Get the current visual selection of text and exit visual mode.
 ---
 ---@param opts { strict: boolean|? }|?
@@ -256,75 +299,73 @@ end
 ---@return { lines: string[], selection: string, csrow: integer, cscol: integer, cerow: integer, cecol: integer }|?
 M.get_visual_selection = function(opts)
   opts = opts or {}
-  -- Adapted from fzf-lua:
-  -- https://github.com/ibhagwan/fzf-lua/blob/6ee73fdf2a79bbd74ec56d980262e29993b46f2b/lua/fzf-lua/utils.lua#L434-L466
-  -- this will exit visual mode
-  -- use 'gv' to reselect the text
-  local _, csrow, cscol, cerow, cecol
-  local mode = vim.fn.mode()
-  if opts.strict and not vim.endswith(string.lower(mode), "v") then
-    return
+
+  local c_v = vim.api.nvim_replace_termcodes("<C-v>", true, true, true)
+  local modes = { "v", "V", c_v }
+  local mode = vim.fn.mode():sub(1, 1)
+  if opts.strict and not vim.tbl_contains(modes, mode) then
+    return {}
   end
 
-  if mode == "v" or mode == "V" or mode == "" then
-    -- if we are in visual mode use the live position
-    _, csrow, cscol, _ = unpack(vim.fn.getpos ".")
-    _, cerow, cecol, _ = unpack(vim.fn.getpos "v")
-    if mode == "V" then
-      -- visual line doesn't provide columns
-      cscol, cecol = 0, 999
-    end
-    -- exit visual mode
-    vim.api.nvim_feedkeys(vim.api.nvim_replace_termcodes("<Esc>", true, false, true), "n", true)
-  else
-    -- otherwise, use the last known visual position
-    _, csrow, cscol, _ = unpack(vim.fn.getpos "'<")
-    _, cerow, cecol, _ = unpack(vim.fn.getpos "'>")
-  end
-
-  -- Swap vars if needed
-  if cerow < csrow then
+  local _, csrow, cscol = unpack(vim.fn.getpos "v")
+  local _, cerow, cecol = unpack(vim.fn.getpos ".")
+  if csrow > cerow or (csrow == cerow and cscol > cecol) then
     csrow, cerow = cerow, csrow
     cscol, cecol = cecol, cscol
-  elseif cerow == csrow and cecol < cscol then
-    cscol, cecol = cecol, cscol
   end
 
-  local lines = vim.fn.getline(csrow, cerow)
-  assert(type(lines) == "table")
-  if vim.tbl_isempty(lines) then
-    return
-  end
+  -- stop visual mode
+  vim.cmd("normal! " .. mode)
 
-  -- When the whole line is selected via visual line mode ("V"), cscol / cecol will be equal to "v:maxcol"
-  -- for some odd reason. So change that to what they should be here. See ':h getpos' for more info.
-  local maxcol = vim.api.nvim_get_vvar "maxcol"
-  if cscol == maxcol then
-    cscol = string.len(lines[1])
+  local lines = vim.api.nvim_buf_get_lines(0, csrow - 1, cerow, false)
+  if #lines == 0 then
+    return {}
   end
-  if cecol == maxcol then
-    cecol = string.len(lines[#lines])
+  local original_lines = lines
+  cecol = math.min(cecol, #lines[#lines])
+
+  if mode == "v" or mode == "V" then
+    if vim.fn.has "nvim-0.10" == 1 and cecol > 0 then
+      cecol = cecol + vim.str_utf_end(lines[#lines], cecol)
+    end
+    if mode == "v" then
+      if #lines == 1 then
+        local selection = string.sub(lines[1], cscol, cecol)
+        return {
+          lines = original_lines,
+          selection = selection,
+          csrow = csrow,
+          cscol = cscol,
+          cerow = cerow,
+          cecol = cecol,
+        }
+      end
+      lines[1] = string.sub(lines[1], cscol)
+      lines[#lines] = string.sub(lines[#lines], 1, cecol)
+    elseif mode == "V" then
+      cscol, cecol = 0, 999
+    end
+  else
+    --  TODO: visual block: fix weird behavior when selection include end of line
+    local csw = math.min(util.str_widthindex(lines[1], cscol)[1], util.str_widthindex(lines[#lines], cecol)[1])
+    local cew = math.max(util.str_widthindex(lines[1], cscol)[2], util.str_widthindex(lines[#lines], cecol)[2])
+    for i, line in ipairs(lines) do
+      -- byte index for current line from width index
+      local csl = util.str_wbyteindex(line, csw)[1]
+      local cel = util.str_wbyteindex(line, cew)[2]
+      if vim.fn.has "nvim-0.10" == 1 then
+        csl = csl + vim.str_utf_start(line, csl)
+        cel = cel + vim.str_utf_end(line, cel)
+      end
+      lines[i] = string.sub(line, csl, cel)
+    end
   end
 
   ---@type string
-  local selection
-  local n = #lines
-  if n <= 0 then
-    selection = ""
-  elseif n == 1 then
-    selection = string.sub(lines[1], cscol, cecol)
-  elseif n == 2 then
-    selection = string.sub(lines[1], cscol) .. "\n" .. string.sub(lines[n], 1, cecol)
-  else
-    selection = string.sub(lines[1], cscol)
-      .. "\n"
-      .. table.concat(lines, "\n", 2, n - 1)
-      .. "\n"
-      .. string.sub(lines[n], 1, cecol)
-  end
+  local selection = table.concat(lines, "\n")
 
   return {
-    lines = lines,
+    lines = original_lines,
     selection = selection,
     csrow = csrow,
     cscol = cscol,
