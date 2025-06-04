@@ -25,19 +25,37 @@ return function(client, data)
       log.warn "Aborted"
       return
     elseif title == "" then
-      title = nil
+      title = client:new_note_id()
     end
   end
 
+  local opts = client:opts_for_workspace()
+  local template = nil
+  local update_content = nil
+  if opts.extract ~= nil then
+    template = opts.extract.template
+    update_content = opts.extract.update_content
+  end
+
   -- create the new note.
-  local note = client:create_note { title = title }
+  local note = client:create_note { title = title, template = template }
+  note.title = title -- reset title to ignore template heading
+  client:write_note(note, {
+    update_content = function(lines)
+      if update_content ~= nil then
+        lines = update_content(lines, title)
+      end
+      table.insert(lines, "")
+      return table.move(content, 1, #content, #lines + 1, lines)
+    end,
+  })
 
   -- replace selection with link to new note
   local link = client:format_link(note)
-  vim.api.nvim_buf_set_text(0, viz.csrow - 1, viz.cscol - 1, viz.cerow - 1, viz.cecol, { link })
+  if viz.cecol == 999 then
+    vim.api.nvim_buf_set_lines(0, viz.csrow - 1, viz.cerow, false, { link })
+  else
+    vim.api.nvim_buf_set_text(0, viz.csrow - 1, viz.cscol - 1, viz.cerow - 1, viz.cecol, { link })
+  end
   client:update_ui(0)
-
-  -- add the selected text to the end of the new note
-  client:open_note(note, { sync = true })
-  vim.api.nvim_buf_set_lines(0, -1, -1, false, content)
 end
