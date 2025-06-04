@@ -11,6 +11,7 @@ local config = {}
 ---@field notes_subdir string|?
 ---@field templates obsidian.config.TemplateOpts
 ---@field new_notes_location obsidian.config.NewNotesLocation
+---@field extract obsidian.config.ExtractOpts
 ---@field note_id_func (fun(title: string|?): string)|?
 ---@field note_path_func (fun(spec: { id: string, dir: obsidian.Path, title: string|? }): string|obsidian.Path)|?
 ---@field wiki_link_func (fun(opts: {path: string, label: string, id: string|?}): string)
@@ -48,6 +49,7 @@ config.ClientOpts.default = function()
     log_level = vim.log.levels.INFO,
     notes_subdir = nil,
     new_notes_location = config.NewNotesLocation.current_dir,
+    extract = config.ExtractOpts.default(),
     templates = config.TemplateOpts.default(),
     note_id_func = nil,
     wiki_link_func = builtin.wiki_link_id_prefix,
@@ -470,6 +472,22 @@ config.TemplateOpts.default = function()
     -- Functions are called with obsidian.TemplateContext objects as their sole parameter.
     -- See: https://github.com/obsidian-nvim/obsidian.nvim/wiki/Template#substitutions
     substitutions = {},
+  }
+end
+
+---@class obsidian.config.ExtractOpts
+---
+---@field template string|?
+---@field update_content (fun(lines: string[], title: string): string[])|?
+config.ExtractOpts = {}
+
+--- Get defaults.
+---
+---@return obsidian.config.ExtractOpts
+config.ExtractOpts.default = function()
+  return {
+    template = nil,
+    update_content = nil,
   }
 end
 

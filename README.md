@@ -369,6 +369,21 @@ require("obsidian").setup {
   -- _ "notes_subdir" - put new notes in the default notes subdirectory.
   new_notes_location = "notes_subdir",
 
+  -- Optional, extract note
+  extract = {
+    -- if you want to automatically insert a template when extract note from your template directory like 'note.md'
+    template = "note.md",
+    -- update the content of the note after extracting
+    update_content = function(lines, title)
+      for i, line in ipairs(lines) do
+        if line == "# <% tp.file.title %>" then
+          lines[i] = "# " .. title
+        end
+      end
+      return lines
+    end,
+  },
+
   -- Optional, customize how note IDs are generated given an optional title.
   ---@param title string|?
   ---@return string
